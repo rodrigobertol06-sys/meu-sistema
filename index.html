@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meu Primeiro Sistema</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="container">
+        <h1>Meu Sistema de Registros</h1>
+        
+        <!-- Área para preencher os dados (formulário) -->
+        <div class="form-card">
+            <input type="text" id="campoNome" placeholder="Digite o nome...">
+            <input type="text" id="campoCargo" placeholder="Digite o cargo/função...">
+            <button id="botaoSalvar">Salvar Registro</button>
+        </div>
+
+        <h2>Tabela de Dados</h2>
+        <!-- Tabela onde os dados vão aparecer visualmente -->
+        <table>
+            <thead>
+                <tr>
+                    <th>Nome</th>
+                    <th>Cargo</th>
+                </tr>
+            </thead>
+            <tbody id="corpoTabela">
+                <!-- Os dados que vierem do banco vão encaixar aqui embaixo -->
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Indicando que o arquivo app.js é o nosso cérebro -->
+    <script type="module" src="app.js"></script>
+</body>
+</html>
