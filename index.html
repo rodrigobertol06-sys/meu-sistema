@@ -3,37 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meu Primeiro Sistema</title>
+    <meta name="theme-color" content="#0f766e">
+    <title>Meu Sistema Financeiro</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-    <div class="container">
-        <h1>Meu Sistema de Registros</h1>
-        
-        <!-- Área para preencher os dados (formulário) -->
-        <div class="form-card">
-            <input type="text" id="campoNome" placeholder="Digite o nome...">
-            <input type="text" id="campoCargo" placeholder="Digite o cargo/função...">
-            <button id="botaoSalvar">Salvar Registro</button>
+    <header class="topo">
+        <div class="topo-linha">
+            <h1>Meu Sistema</h1>
+            <span id="status" class="status"></span>
         </div>
+        <label class="cenario-escolha">
+            <span>Cenário</span>
+            <select id="cenarioAtivo"></select>
+        </label>
+    </header>
 
-        <h2>Tabela de Dados</h2>
-        <!-- Tabela onde os dados vão aparecer visualmente -->
-        <table>
-            <thead>
-                <tr>
-                    <th>Nome</th>
-                    <th>Cargo</th>
-                </tr>
-            </thead>
-            <tbody id="corpoTabela">
-                <!-- Os dados que vierem do banco vão encaixar aqui embaixo -->
-            </tbody>
-        </table>
-    </div>
+    <nav class="abas" id="abas">
+        <button data-aba="painel" class="ativa">Painel</button>
+        <button data-aba="renda">Renda &amp; Gastos</button>
+        <button data-aba="aquisicoes">Aquisições</button>
+        <button data-aba="investimentos">Investimentos</button>
+        <button data-aba="carros">Carros</button>
+        <button data-aba="mercado">Mercado</button>
+        <button data-aba="ajustes">Ajustes</button>
+    </nav>
 
-    <!-- Indicando que o arquivo app.js é o nosso cérebro -->
-    <script type="module" src="app.js"></script>
+    <main id="conteudo" class="conteudo"></main>
+
+    <script type="module" src="js/app.js"></script>
 </body>
 </html>
