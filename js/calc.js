@@ -32,51 +32,109 @@ export function calcValores(c) {
 
 // ---------- Investimentos ----------
 
+// Tipos de aplicação com os padrões de cada um (isenção de IR e custódia).
+export const TIPOS_INVESTIMENTO = [
+    { nome: "Poupança", isento: true, custodia: 0 },
+    { nome: "Tesouro Selic", isento: false, custodia: 0.2 },
+    { nome: "Tesouro Prefixado", isento: false, custodia: 0.2 },
+    { nome: "Tesouro IPCA+", isento: false, custodia: 0.2 },
+    { nome: "CDB", isento: false, custodia: 0 },
+    { nome: "LCI", isento: true, custodia: 0 },
+    { nome: "LCA", isento: true, custodia: 0 },
+    { nome: "Outro", isento: false, custodia: 0 },
+];
+
+// Um período de aplicação (do início ao vencimento).
+// A ideia: o salário do período inteiro é separado antes (não sai da aplicação),
+// o valor aplicado rende sem retiradas e, no fim, o "lucro real" é o lucro
+// menos o salário que esse rendimento precisava cobrir.
+function calcCiclo({ valor, inicio, fim, taxa, custodia, isento, retirada }) {
+    const dias = diasEntre(inicio, fim);
+    const anos = dias / 365;
+    const meses = dias / DIAS_POR_MES;
+    const lucroBruto = valor * (Math.pow(1 + (Number(taxa) || 0) / 100, anos) - 1);
+    const valorCustodia = valor * ((Number(custodia) || 0) / 100) * anos;
+    const ir = isento ? 0 : aliquotaIR(dias);
+    const imposto = lucroBruto * (ir / 100);
+    const lucroLiquido = lucroBruto - imposto - valorCustodia;
+    const rendimentoMensal = meses ? lucroLiquido / meses : 0;
+    const reaplicar = rendimentoMensal - retirada;
+    const lucroReaplicar = reaplicar * meses;
+    return {
+        valor, inicio, fim, taxa, dias, meses, anos, ir,
+        lucroBruto, valorCustodia, imposto, lucroLiquido,
+        saldoFinal: valor + lucroLiquido,
+        lucroPct: valor ? lucroLiquido / valor : 0,
+        rendimentoMensal,
+        retirada,
+        ajustarRetirada: retirada > rendimentoMensal,
+        reaplicar,
+        totalRetirado: retirada * meses,
+        lucroReaplicar,
+        pctReaplicado: lucroLiquido ? lucroReaplicar / lucroLiquido : 0,
+        totalReaplicar: valor + lucroReaplicar,
+    };
+}
+
+// Data ISO somada de N dias.
+export function somarDias(iso, dias) {
+    const d = new Date(iso + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + dias);
+    return d.toISOString().slice(0, 10);
+}
+
 export function calcInvestimentos(c) {
     const { aplicavel } = calcValores(c);
     const salarioBase = Number(c.renda.salarioBase) || 0;
-    const fixos = c.investimentos.filter((i) => !i.restante);
-    const somaFixos = soma(fixos);
-    const qtdRestante = c.investimentos.length - fixos.length;
-    const valorRestante = qtdRestante ? Math.max(aplicavel - somaFixos, 0) / qtdRestante : 0;
+    const modo = (i) => i.modo || (i.restante ? "restante" : "fixo");
+    const valorDefinido = (i) =>
+        modo(i) === "pct" ? aplicavel * ((Number(i.pct) || 0) / 100) : Number(i.valor) || 0;
+    const definidos = c.investimentos.filter((i) => modo(i) !== "restante");
+    const somaDefinidos = definidos.reduce((t, i) => t + valorDefinido(i), 0);
+    const qtdRestante = c.investimentos.length - definidos.length;
+    const valorRestante = qtdRestante ? Math.max(aplicavel - somaDefinidos, 0) / qtdRestante : 0;
 
     const linhas = c.investimentos.map((inv) => {
-        const valor = inv.restante ? valorRestante : Number(inv.valor) || 0;
-        const dias = diasEntre(inv.inicio, inv.fim);
-        const anos = dias / 365;
-        const meses = dias / DIAS_POR_MES;
-        const taxa = (Number(inv.taxa) || 0) / 100;
-        const lucroBruto = valor * (Math.pow(1 + taxa, anos) - 1);
-        const valorCustodia = valor * ((Number(inv.custodia) || 0) / 100) * anos;
-        const ir = inv.isento ? 0 : aliquotaIR(dias);
-        const imposto = lucroBruto * (ir / 100);
-        const lucroLiquido = lucroBruto - imposto - valorCustodia;
-        const rendimentoMensal = meses ? lucroLiquido / meses : 0;
-        const retirada = (Number(inv.multiplicador) || 0) * salarioBase;
-        const reaplicar = rendimentoMensal - retirada;
-        const lucroReaplicar = reaplicar * meses;
+        const valor = modo(inv) === "restante" ? valorRestante : valorDefinido(inv);
+        const primeiro = calcCiclo({
+            ...inv, valor, retirada: (Number(inv.multiplicador) || 0) * salarioBase,
+        });
+
+        // Renovações: no vencimento, resgata o saldo, separa o salário do próximo
+        // período e reaplica o restante (mais um aporte opcional).
+        const ciclos = [{ ...primeiro, numero: 1 }];
+        for (const ren of inv.renovacoes || []) {
+            const anterior = ciclos[ciclos.length - 1];
+            const retirada = (Number(ren.multiplicador) || 0) * salarioBase;
+            const meses = diasEntre(anterior.fim, ren.fim) / DIAS_POR_MES;
+            const reservaSalario = retirada * meses;
+            const aporte = Number(ren.aporte) || 0;
+            const valorCiclo = anterior.saldoFinal - reservaSalario + aporte;
+            const ciclo = calcCiclo({
+                valor: Math.max(valorCiclo, 0), inicio: anterior.fim, fim: ren.fim, taxa: ren.taxa,
+                custodia: inv.custodia, isento: inv.isento, retirada,
+            });
+            ciclos.push({
+                ...ciclo, id: ren.id, numero: ciclos.length + 1,
+                resgatado: anterior.saldoFinal, reservaSalario, aporte,
+                faltaParaSalario: valorCiclo < 0 ? -valorCiclo : 0,
+            });
+        }
+
         return {
             ...inv,
-            valor,
+            ...primeiro,
+            modo: modo(inv),
             divisor: aplicavel ? valor / aplicavel : 0,
-            dias, meses, anos, ir,
-            lucroBruto, valorCustodia, imposto, lucroLiquido,
-            saldoFinal: valor + lucroLiquido,
-            lucroPct: valor ? lucroLiquido / valor : 0,
-            rendimentoMensal,
-            retirada,
-            ajustarRetirada: retirada > rendimentoMensal,
-            reaplicar,
-            totalRetirado: retirada * meses,
-            lucroReaplicar,
-            pctReaplicado: lucroLiquido ? lucroReaplicar / lucroLiquido : 0,
-            totalReaplicar: valor + lucroReaplicar,
+            ciclos,
+            final: ciclos[ciclos.length - 1],
         };
     });
 
     const totalAplicado = soma(linhas);
     const lucroEsperado = soma(linhas, "lucroLiquido");
     const lucroReal = soma(linhas, "lucroReaplicar");
+    const comRenovacao = linhas.filter((l) => l.ciclos.length > 1);
     return {
         linhas,
         totalAplicado,
@@ -94,6 +152,11 @@ export function calcInvestimentos(c) {
             pct: totalAplicado ? lucroReal / totalAplicado : 0,
             saldo: totalAplicado + lucroReal,
         },
+        renovacoes: comRenovacao.length ? {
+            saldoFinal: linhas.reduce((t, l) => t + l.final.saldoFinal, 0),
+            ultimoVencimento: comRenovacao.map((l) => l.final.fim).sort().pop(),
+            salarioReservado: linhas.reduce((t, l) => t + soma(l.ciclos.slice(1), "reservaSalario"), 0),
+        } : null,
     };
 }
 

@@ -281,3 +281,12 @@ th small { color: var(--texto-3); font-weight: 400; }
     .barra-linha { grid-template-columns: 1fr auto; }
     .barra-trilho { grid-column: 1 / -1; grid-row: 2; }
 }
+
+/* ---------- Investimentos: resumo do mês e renovações ---------- */
+
+.resumo-mes { margin: 4px 0 12px; }
+.ciclo { border: 1px dashed var(--borda); border-radius: 10px; padding: 12px; margin-top: 10px; }
+.ciclo h3, .subtitulo { font-size: 14px; margin: 0; }
+.subtitulo { margin-top: 16px; }
+.conta { font-size: 14px; color: var(--texto-2); margin: 0 0 10px; }
+.conta b { color: var(--texto); }

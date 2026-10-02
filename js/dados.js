@@ -28,9 +28,10 @@ const rendaPadrao = (valeMarieli) => ({
     ]),
 });
 
-const investimento = (tipo, taxa, custodia, isento, valor, restante, multiplicador) => ({
-    id: novoId(), tipo, inicio: "2026-10-07", fim: "2029-01-01",
-    taxa, custodia, isento, valor, restante, multiplicador,
+const investimento = (nome, tipo, taxa, custodia, isento, valor, restante, multiplicador) => ({
+    id: novoId(), nome, tipo, inicio: "2026-10-07", fim: "2029-01-01",
+    taxa, custodia, isento, modo: restante ? "restante" : "fixo", valor, pct: 0,
+    multiplicador, renovacoes: [],
 });
 
 function cenarioSuperior() {
@@ -40,8 +41,8 @@ function cenarioSuperior() {
         valores: { aReceber: 81000000, pctConsumir: 45 },
         renda: rendaPadrao(550),
         investimentos: [
-            investimento("Tesouro", 13.96, 0.2, false, 2000000, false, 0),
-            investimento("Poupança", 6, 0, true, 0, true, 100),
+            investimento("Tesouro", "Tesouro Prefixado", 13.96, 0.2, false, 2000000, false, 0),
+            investimento("Poupança", "Poupança", 6, 0, true, 0, true, 100),
         ],
         taxaImoveis: 10,
         aquisicoes: [
@@ -83,8 +84,8 @@ function cenarioAte10M() {
         valores: { aReceber: 6600000, pctConsumir: 60 },
         renda: rendaPadrao(550),
         investimentos: [
-            investimento("Tesouro", 13.96, 0.2, false, 2000000, false, 12),
-            investimento("Poupança", 6, 0, true, 0, true, 0),
+            investimento("Tesouro", "Tesouro Prefixado", 13.96, 0.2, false, 2000000, false, 12),
+            investimento("Poupança", "Poupança", 6, 0, true, 0, true, 0),
         ],
         taxaImoveis: 10,
         aquisicoes: [
@@ -136,6 +137,21 @@ function catalogoPadrao() {
         ],
         modelos,
     };
+}
+
+// Atualiza dados salvos por versões anteriores do sistema.
+export function migrar(dados) {
+    for (const c of dados.cenarios || []) {
+        for (const inv of c.investimentos || []) {
+            if (!inv.modo) inv.modo = inv.restante ? "restante" : "fixo";
+            if (!inv.nome) inv.nome = inv.tipo;
+            if (inv.tipo === "Tesouro") inv.tipo = "Tesouro Prefixado";
+            if (inv.pct == null) inv.pct = 0;
+            if (!inv.renovacoes) inv.renovacoes = [];
+            delete inv.restante;
+        }
+    }
+    return dados;
 }
 
 export function dadosPadrao() {

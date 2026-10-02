@@ -9,7 +9,7 @@ e "Investimentos Poupança").
 - **Painel**: valores, saldo disponível, fluxo mensal, projeção dos investimentos e alertas.
 - **Renda & Gastos**: valor a receber, % para consumo, renda mensal e gastos fixos (os gastos com carros entram sozinhos).
 - **Aquisições**: dívidas, imóveis (com % de taxas de compra), casa, doações, reserva etc.
-- **Investimentos**: cada aplicação com taxa, período, custódia, IR (tabela regressiva), retirada mensal e quanto é reaplicado.
+- **Investimentos**: quantos investimentos quiser (poupança, Tesouro, CDB, LCI, LCA...), com valor fixo, % do saldo ou "o que sobrar"; mostra quanto rende por mês, o salário e a sobra. O botão "Renovar no vencimento" simula os próximos períodos: resgata o saldo, separa o salário do novo período e reaplica o restante.
 - **Carros**: garagem, custos (combustível, IPVA, seguro, manutenção), estimativa de km e catálogo de modelos.
 - **Mercado**: Selic, CDI e IPCA atuais (BrasilAPI) e consulta à tabela FIPE.
 - **Ajustes**: cenários, login Google (sincronização), backup.

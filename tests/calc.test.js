@@ -65,3 +65,38 @@ test("tabela regressiva do IR", () => {
     assert.equal(aliquotaIR(600), 17.5);
     assert.equal(aliquotaIR(817), 15);
 });
+
+test("renovação: resgata o saldo, separa o salário do próximo período e reaplica o resto", () => {
+    const d = dadosPadrao();
+    const c = d.cenarios[0];
+    const poup = c.investimentos[1];
+    poup.renovacoes.push({ id: "r1", fim: "2031-03-29", taxa: 6, multiplicador: 100, aporte: 0 });
+    const linha = calcular(c, d.catalogo).invest.linhas[1];
+    const ciclo = linha.ciclos[1];
+    assert.equal(linha.ciclos.length, 2);
+    assert.equal(ciclo.inicio, "2029-01-01");
+    perto(ciclo.dias, 817, 0);
+    perto(ciclo.resgatado, 48477822.47);
+    perto(ciclo.reservaSalario, 4354050.41);
+    perto(ciclo.valor, 48477822.47 - 4354050.41);
+    assert.ok(ciclo.lucroLiquido > 0);
+    assert.equal(linha.final, ciclo);
+});
+
+test("vários investimentos: valor fixo, % do saldo e restante dividido", () => {
+    const d = dadosPadrao();
+    const c = d.cenarios[1]; // saldo aplicável 2.640.000
+    c.investimentos.push(
+        { id: "cdb", nome: "CDB", tipo: "CDB", inicio: "2026-10-07", fim: "2027-10-07", taxa: 14, custodia: 0,
+          isento: false, modo: "pct", pct: 10, valor: 0, multiplicador: 0, renovacoes: [] },
+        { id: "lci", nome: "LCI", tipo: "LCI", inicio: "2026-10-07", fim: "2027-10-07", taxa: 12, custodia: 0,
+          isento: true, modo: "restante", pct: 0, valor: 0, multiplicador: 0, renovacoes: [] },
+    );
+    const inv = calcular(c, d.catalogo).invest;
+    perto(inv.linhas[2].valor, 264000);
+    // restante = 2.640.000 - 2.000.000 - 264.000 = 376.000, dividido entre poupança e LCI
+    perto(inv.linhas[1].valor, 188000);
+    perto(inv.linhas[3].valor, 188000);
+    assert.equal(inv.linhas[2].ir, 17.5); // 365 dias
+    perto(inv.naoAlocado, 0);
+});

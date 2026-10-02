@@ -1,6 +1,6 @@
 // Interface do sistema: desenha as abas, liga os campos aos dados e salva.
-import { calcular, GRUPOS_AQUISICAO } from "./calc.js";
-import { dadosPadrao, novoId } from "./dados.js";
+import { calcular, somarDias, TIPOS_INVESTIMENTO } from "./calc.js";
+import { dadosPadrao, migrar, novoId } from "./dados.js";
 import * as mercadoApi from "./mercado.js";
 
 const CHAVE_LOCAL = "meu-sistema:dados";
@@ -9,7 +9,7 @@ const conteudo = document.getElementById("conteudo");
 const seletorCenario = document.getElementById("cenarioAtivo");
 const statusEl = document.getElementById("status");
 
-let dados = lerLocal() || dadosPadrao();
+let dados = migrar(lerLocal() || dadosPadrao());
 let abaAtual = "painel";
 let nuvem = null; // módulo js/nuvem.js, carregado se o Firebase estiver disponível
 let usuario = null;
@@ -106,9 +106,9 @@ function campo({ rotulo, caminho, valor, tipo = "num", raiz = "c", passo = "any"
     return rotulo ? `<label class="campo"><span>${rotulo}</span>${input}</label>` : input;
 }
 
-function selecao({ rotulo, caminho, valor, opcoes, raiz = "c" }) {
+function selecao({ rotulo, caminho, valor, opcoes, raiz = "c", extra = "" }) {
     const ops = opcoes.map((o) => `<option ${o === valor ? "selected" : ""}>${esc(o)}</option>`).join("");
-    const sel = `<select data-${raiz}="${caminho}" data-tipo="texto">${ops}</select>`;
+    const sel = `<select data-${raiz}="${caminho}" data-tipo="texto" ${extra}>${ops}</select>`;
     return rotulo ? `<label class="campo"><span>${rotulo}</span>${sel}</label>` : sel;
 }
 
@@ -150,7 +150,7 @@ function abaPainel(c, r) {
     if (r.saldoDisponivel < 0) alertas.push(`As aquisições passam o valor para consumo em <b>${brl(-r.saldoDisponivel)}</b>.`);
     if (Math.abs(r.invest.naoAlocado) > 0.5) alertas.push(`${r.invest.naoAlocado > 0 ? "Sobram" : "Faltam"} <b>${brl(Math.abs(r.invest.naoAlocado))}</b> do saldo aplicável para distribuir nos investimentos.`);
     r.invest.linhas.filter((l) => l.ajustarRetirada).forEach((l) =>
-        alertas.push(`A retirada do <b>${esc(l.tipo)}</b> (${brl(l.retirada)}/mês) é maior que o rendimento (${brl(l.rendimentoMensal)}/mês). Ajuste a retirada.`));
+        alertas.push(`O salário tirado de <b>${esc(l.nome)}</b> (${brl(l.retirada)}/mês) é maior que o rendimento (${brl(l.rendimentoMensal)}/mês). Ajuste a retirada.`));
     if (r.fluxo.saldo < 0) alertas.push(`Os gastos mensais passam as entradas em <b>${brl(-r.fluxo.saldo)}</b>/mês.`);
 
     const grupos = r.aquisicoes.grupos.filter((g) => g.total > 0).sort((a, b) => b.total - a.total);
@@ -176,8 +176,9 @@ function abaPainel(c, r) {
         ${bloco("Saldo do mês", brl(r.fluxo.saldo), { destaque: true, tom: sinal(r.fluxo.saldo) })}
     </div>`)}
     ${cartao("Projeção dos investimentos", tabela(["", "Lucro", "Lucro %", "Saldo final"], [
-        `<tr><th>Esperado <small>(sem retiradas)</small></th><td>${brl(r.invest.esperado.lucro)}</td><td>${pct(r.invest.esperado.pct)}</td><td>${brl(r.invest.esperado.saldo)}</td></tr>`,
-        `<tr><th>Real <small>(após retiradas)</small></th><td>${brl(r.invest.real.lucro)}</td><td>${pct(r.invest.real.pct)}</td><td>${brl(r.invest.real.saldo)}</td></tr>`,
+        `<tr><th>Esperado <small>(no vencimento)</small></th><td>${brl(r.invest.esperado.lucro)}</td><td>${pct(r.invest.esperado.pct)}</td><td>${brl(r.invest.esperado.saldo)}</td></tr>`,
+        `<tr><th>Real <small>(lucro − salário)</small></th><td>${brl(r.invest.real.lucro)}</td><td>${pct(r.invest.real.pct)}</td><td>${brl(r.invest.real.saldo)}</td></tr>`,
+        ...(r.invest.renovacoes ? [`<tr><th>Após renovações <small>(até ${dataBR(r.invest.renovacoes.ultimoVencimento)})</small></th><td colspan="2">salários separados: ${brl(r.invest.renovacoes.salarioReservado)}</td><td>${brl(r.invest.renovacoes.saldoFinal)}</td></tr>`] : []),
     ]))}
     ${cartao("Para onde vai o dinheiro (aquisições)", grupos.length ? `<div class="barras">${barras}</div>
         <p class="total-linha">Total: <b>${brl(r.aquisicoes.total)}</b></p>` : `<p class="vazio">Nenhuma aquisição cadastrada.</p>`)}
@@ -232,52 +233,98 @@ function abaAquisicoes(c, r) {
 }
 
 function abaInvestimentos(c, r) {
+    const modos = [["fixo", "Valor fixo (R$)"], ["pct", "% do saldo aplicável"], ["restante", "O que sobrar do saldo"]];
+
     const cartoes = r.invest.linhas.map((l) => {
         const base = `investimentos.${l.id}`;
+        const campoValor = l.modo === "fixo"
+            ? campo({ rotulo: "Valor aplicado (R$)", caminho: `${base}.valor`, valor: l.valor })
+            : l.modo === "pct"
+                ? campo({ rotulo: `% do saldo aplicável (= ${brl(l.valor)})`, caminho: `${base}.pct`, valor: l.pct })
+                : `<label class="campo"><span>Valor aplicado</span><input type="text" value="${brl(l.valor)}" disabled></label>`;
         const form = `<div class="grade">
-            ${campo({ rotulo: "Tipo", caminho: `${base}.tipo`, valor: l.tipo, tipo: "texto" })}
+            ${campo({ rotulo: "Nome (ex.: Poupança Caixa)", caminho: `${base}.nome`, valor: l.nome, tipo: "texto" })}
+            ${selecao({ rotulo: "Tipo", caminho: `${base}.tipo`, valor: l.tipo, opcoes: TIPOS_INVESTIMENTO.map((t) => t.nome), extra: `data-preset="${l.id}"` })}
             ${campo({ rotulo: "Início", caminho: `${base}.inicio`, valor: l.inicio, tipo: "data" })}
-            ${campo({ rotulo: "Fim", caminho: `${base}.fim`, valor: l.fim, tipo: "data" })}
-            ${campo({ rotulo: "Taxa de juros (% ao ano)", caminho: `${base}.taxa`, valor: l.taxa })}
+            ${campo({ rotulo: "Vencimento", caminho: `${base}.fim`, valor: l.fim, tipo: "data" })}
+            ${campo({ rotulo: "Rentabilidade (% ao ano)", caminho: `${base}.taxa`, valor: l.taxa })}
             ${campo({ rotulo: "Taxa de custódia (% ao ano)", caminho: `${base}.custodia`, valor: l.custodia })}
-            ${l.restante
-                ? `<label class="campo"><span>Valor aplicado</span><input type="text" value="${brl(l.valor)}" disabled></label>`
-                : campo({ rotulo: "Valor aplicado (R$)", caminho: `${base}.valor`, valor: l.valor })}
-            ${campo({ rotulo: "Multiplicador de retirada (× salário base)", caminho: `${base}.multiplicador`, valor: l.multiplicador })}
+            <label class="campo"><span>Como definir o valor</span><select data-c="${base}.modo" data-tipo="texto">
+                ${modos.map(([v, t]) => `<option value="${v}" ${v === l.modo ? "selected" : ""}>${t}</option>`).join("")}
+            </select></label>
+            ${campoValor}
+            ${campo({ rotulo: `Salário: quantos × salário base (${brl(c.renda.salarioBase)})`, caminho: `${base}.multiplicador`, valor: l.multiplicador })}
         </div>
         <div class="checks">
-            ${campo({ rotulo: "Recebe o restante do saldo aplicável", caminho: `${base}.restante`, valor: l.restante, tipo: "bool" })}
-            ${campo({ rotulo: "Isento de IR (ex.: poupança)", caminho: `${base}.isento`, valor: l.isento, tipo: "bool" })}
+            ${campo({ rotulo: "Isento de IR (poupança, LCI, LCA)", caminho: `${base}.isento`, valor: l.isento, tipo: "bool" })}
         </div>`;
-        const resultado = tabela(["Item", "Valor"], [
-            ["Divisão do saldo aplicável", pct(l.divisor)],
+
+        const detalhes = tabela(["Item", "Valor"], [
+            ["Parte do saldo aplicável", pct(l.divisor)],
             ["Duração", `${l.dias} dias · ${num(l.meses)} meses · ${num(l.anos)} anos`],
             ["Lucro bruto", brl(l.lucroBruto)],
             [`Imposto de renda (${num(l.ir)}%)`, brl(-l.imposto)],
             ["Custódia", brl(-l.valorCustodia)],
             ["Lucro líquido", `<b>${brl(l.lucroLiquido)}</b> (${pct(l.lucroPct)})`],
-            ["Saldo final (sem retiradas)", brl(l.saldoFinal)],
-            ["Rendimento mensal médio", brl(l.rendimentoMensal)],
-            ["Retirada mensal", `${brl(l.retirada)}${l.ajustarRetirada ? ` <span class="negativo">⚠️ maior que o rendimento</span>` : ""}`],
-            ["Reaplicado por mês", `<span class="${sinal(l.reaplicar)}">${brl(l.reaplicar)}</span>`],
-            ["Total retirado no período", brl(l.totalRetirado)],
-            ["Lucro reaplicado no período", `${brl(l.lucroReaplicar)} (${pct(l.pctReaplicado)} do lucro)`],
-            ["Saldo final (com retiradas)", `<b>${brl(l.totalReaplicar)}</b>`],
+            ["Saldo no vencimento", `<b>${brl(l.saldoFinal)}</b>`],
+            ["Salário do período (separado antes)", brl(l.totalRetirado)],
+            ["Lucro real (lucro − salário)", `<span class="${sinal(l.lucroReaplicar)}">${brl(l.lucroReaplicar)}</span> (${pct(l.pctReaplicado)} do lucro)`],
         ].map(([a, b]) => `<tr><th>${a}</th><td>${b}</td></tr>`));
-        return cartao(`${esc(l.tipo)} <span class="valor-titulo">${dataBR(l.inicio)} → ${dataBR(l.fim)}</span>`,
-            form + resultado, remover("investimentos", l.id));
+
+        const renovacoes = l.ciclos.slice(1).map((ci) => {
+            const rb = `${base}.renovacoes.${ci.id}`;
+            const ren = l.renovacoes.find((x) => x.id === ci.id);
+            return `<div class="ciclo">
+                <div class="cartao-topo"><h3>${ci.numero}º período · ${dataBR(ci.inicio)} → ${dataBR(ci.fim)}</h3>
+                    ${remover(`${base}.renovacoes`, ci.id)}</div>
+                <div class="grade">
+                    ${campo({ rotulo: "Novo vencimento", caminho: `${rb}.fim`, valor: ren.fim, tipo: "data" })}
+                    ${campo({ rotulo: "Rentabilidade (% ao ano)", caminho: `${rb}.taxa`, valor: ren.taxa })}
+                    ${campo({ rotulo: "Salário (× salário base)", caminho: `${rb}.multiplicador`, valor: ren.multiplicador })}
+                    ${campo({ rotulo: "Aporte (+) ou resgate (−) extra", caminho: `${rb}.aporte`, valor: ren.aporte })}
+                </div>
+                <p class="conta">Resgatado ${brl(ci.resgatado)} − salário do período ${brl(ci.reservaSalario)}${ci.aporte ? ` ${ci.aporte > 0 ? "+" : "−"} ${brl(Math.abs(ci.aporte))}` : ""}
+                    = <b>reaplicar ${brl(ci.valor)}</b></p>
+                ${ci.faltaParaSalario ? `<p class="negativo">⚠️ O saldo não cobre o salário do período: faltam ${brl(ci.faltaParaSalario)}.</p>` : ""}
+                ${resumoMes(ci)}
+                <p class="dica">${ci.dias} dias · IR ${num(ci.ir)}% · saldo no vencimento <b>${brl(ci.saldoFinal)}</b></p>
+            </div>`;
+        }).join("");
+
+        return cartao(`${esc(l.nome)} <span class="valor-titulo">${esc(l.tipo)} · ${brl(l.valor)}</span>`, `
+            ${form}
+            ${resumoMes(l)}
+            <details><summary>Detalhes do período (${dataBR(l.inicio)} → ${dataBR(l.fim)})</summary>${detalhes}</details>
+            ${renovacoes ? `<h3 class="subtitulo">Renovações</h3>${renovacoes}` : ""}
+            <div class="acoes-fim">${botao("↻ Renovar no vencimento", "renovar", `data-id="${l.id}"`)}</div>`,
+            remover("investimentos", l.id));
     }).join("");
 
+    const ren = r.invest.renovacoes;
     return `<div class="blocos fixo">
         ${bloco("Saldo aplicável", brl(r.valores.aplicavel))}
-        ${bloco("Aplicado", brl(r.invest.totalAplicado))}
-        ${bloco("Rendimento mensal", brl(r.invest.rendimentoMensal))}
-        ${bloco("Lucro real no período", brl(r.invest.real.lucro), { destaque: true, nota: pct(r.invest.real.pct) })}
+        ${bloco("Aplicado", brl(r.invest.totalAplicado), { tom: Math.abs(r.invest.naoAlocado) > 0.5 ? "negativo" : "", nota: Math.abs(r.invest.naoAlocado) > 0.5 ? `${r.invest.naoAlocado > 0 ? "sobram" : "faltam"} ${brl(Math.abs(r.invest.naoAlocado))}` : "" })}
+        ${bloco("Rende por mês", brl(r.invest.rendimentoMensal))}
+        ${bloco("Salário por mês", brl(r.invest.retiradaMensal))}
+        ${bloco("Sobra por mês", brl(r.invest.rendimentoMensal - r.invest.retiradaMensal), { destaque: true, tom: sinal(r.invest.rendimentoMensal - r.invest.retiradaMensal) })}
+        ${ren ? bloco(`Saldo após renovações (${dataBR(ren.ultimoVencimento)})`, brl(ren.saldoFinal), { destaque: true }) : ""}
     </div>
     ${cartoes}
-    <div class="acoes-fim">${botao("+ Nova aplicação", "adicionar", `data-colecao="investimentos"`, "primario")}</div>
-    <p class="dica">Rendimento com juros compostos: valor × ((1 + taxa)<sup>anos</sup> − 1). IR pela tabela regressiva
-    (22,5% até 180 dias, 20% até 360, 17,5% até 720, 15% acima). Custódia descontada proporcional ao tempo.</p>`;
+    <div class="acoes-fim">${botao("+ Novo investimento", "adicionar", `data-colecao="investimentos"`, "primario")}</div>
+    <p class="dica">Como funciona: o salário do período inteiro é separado antes (sai do valor para consumo, em Aquisições),
+    e o valor aplicado rende sem retiradas. A "sobra" é quanto o rendimento passa do salário, ou seja, o seu lucro real.
+    Ao renovar, o saldo do vencimento é resgatado, o salário do novo período é separado e o restante é reaplicado.
+    Juros compostos: valor × ((1 + taxa)<sup>anos</sup> − 1). IR pela tabela regressiva (22,5% até 180 dias, 20% até 360,
+    17,5% até 720, 15% acima). Custódia descontada proporcional ao tempo.</p>`;
+}
+
+// "Rende X → salário Y → sobra Z" de um período.
+function resumoMes(ci) {
+    return `<div class="blocos resumo-mes">
+        ${bloco("Rende por mês", brl(ci.rendimentoMensal))}
+        ${bloco("Salário por mês", brl(ci.retirada))}
+        ${bloco("Sobra por mês", brl(ci.reaplicar), { destaque: true, tom: sinal(ci.reaplicar), nota: ci.ajustarRetirada ? "⚠️ salário maior que o rendimento" : "" })}
+    </div>`;
 }
 
 function abaCarros(c, r) {
@@ -366,7 +413,7 @@ function abaMercado(c) {
         ? `<div class="blocos">${m.taxas.map((t) => bloco(esc(t.nome), `${num(t.valor)}% a.a.`)).join("")}</div>
            <div class="aplicar-taxa">
              <span>Usar a Selic como taxa de:</span>
-             ${c.investimentos.map((i) => botao(esc(i.tipo), "aplicarSelic", `data-id="${i.id}"`)).join("")}
+             ${c.investimentos.map((i) => botao(esc(i.nome), "aplicarSelic", `data-id="${i.id}"`)).join("")}
            </div>`
         : `<p class="vazio">Carregando taxas…</p>`;
 
@@ -446,6 +493,13 @@ conteudo.addEventListener("change", (e) => {
     else if (el.id === "arquivoBackup") return importar(el.files[0]);
     else return;
 
+    // Ao trocar o tipo de investimento, aplica isenção de IR e custódia padrão.
+    if (el.dataset.preset) {
+        const inv = cenario().investimentos.find((i) => i.id === el.dataset.preset);
+        const tipo = TIPOS_INVESTIMENTO.find((t) => t.nome === el.value);
+        if (inv && tipo) Object.assign(inv, { isento: tipo.isento, custodia: tipo.custodia });
+    }
+
     // Ao escolher um modelo do catálogo, preenche marca e tipo do carro.
     if (el.dataset.autoTipo) {
         const carro = cenario().carros.find((x) => x.id === el.dataset.autoTipo);
@@ -463,13 +517,24 @@ const novos = {
     carros: () => ({ id: novoId(), marca: "", modelo: "", tipo: dados.catalogo.tipos[0]?.nome || "", ano: new Date().getFullYear(), fipe: 0, compra: 0 }),
     trajetos: () => ({ id: novoId(), saida: "", destino: "", km: 0, vezes: 1 }),
     investimentos: () => ({
-        id: novoId(), tipo: "Nova aplicação", inicio: new Date().toISOString().slice(0, 10),
-        fim: `${new Date().getFullYear() + 2}-01-01`, taxa: 10, custodia: 0, isento: false,
-        valor: 0, restante: false, multiplicador: 0,
+        id: novoId(), nome: "Novo investimento", tipo: "CDB", inicio: new Date().toISOString().slice(0, 10),
+        fim: `${new Date().getFullYear() + 2}-01-01`, taxa: 12, custodia: 0, isento: false,
+        modo: "fixo", valor: 0, pct: 0, multiplicador: 0, renovacoes: [],
     }),
 };
 
 const acoes = {
+    renovar(b) {
+        const inv = cenario().investimentos.find((i) => i.id === b.dataset.id);
+        const datas = [inv.inicio, inv.fim, ...inv.renovacoes.map((x) => x.fim)];
+        const [penultima, ultima] = datas.slice(-2);
+        const duracao = Math.max(Math.round((new Date(ultima) - new Date(penultima)) / 86400000), 30);
+        const anterior = inv.renovacoes[inv.renovacoes.length - 1] || inv;
+        inv.renovacoes.push({
+            id: novoId(), fim: somarDias(ultima, duracao), taxa: anterior.taxa,
+            multiplicador: anterior.multiplicador, aporte: 0,
+        });
+    },
     adicionar(b) {
         acharNoCaminho(cenario(), b.dataset.colecao.split(".")).push(novos[b.dataset.colecao](b));
     },
@@ -532,7 +597,7 @@ const acoes = {
         const inv = cenario().investimentos.find((i) => i.id === b.dataset.id);
         if (!selic || !inv) return false;
         inv.taxa = selic.valor;
-        mostrarStatus(`Taxa de ${inv.tipo} atualizada para ${num(selic.valor)}%`);
+        mostrarStatus(`Taxa de ${inv.nome} atualizada para ${num(selic.valor)}%`);
     },
     fipeGaragem() {
         const p = mercado.preco;
@@ -577,7 +642,7 @@ async function importar(arquivo) {
         const novo = JSON.parse(await arquivo.text());
         if (!Array.isArray(novo.cenarios) || !novo.catalogo) throw new Error("formato inválido");
         if (!confirm("Substituir os dados atuais pelo backup?")) return;
-        dados = novo;
+        dados = migrar(novo);
         salvar();
         desenhar();
     } catch {
@@ -647,10 +712,15 @@ async function iniciarNuvem() {
         } else {
             try {
                 const remoto = await nuvem.lerNuvem();
-                if (remoto && (remoto.atualizadoEm || 0) > (dados.atualizadoEm || 0)) {
-                    dados = remoto;
+                // Aparelho que nunca sincronizou: a nuvem manda (evita sobrescrever
+                // os dados reais com os dados de exemplo de um aparelho novo).
+                if (remoto && (!dados.sincronizado || (remoto.atualizadoEm || 0) > (dados.atualizadoEm || 0))) {
+                    dados = migrar(remoto);
+                    dados.sincronizado = true;
                     salvar();
                 } else {
+                    dados.sincronizado = true;
+                    salvar();
                     await nuvem.salvarNuvem(dados);
                 }
                 mostrarStatus("Sincronizado");
